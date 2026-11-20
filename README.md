@@ -4,6 +4,7 @@
 
 When multiple AI agents or background workers act on the same customer, API, or database record at the same time, they collide—causing duplicate refunds, double emails, and corrupted state. Turnstile stops collisions in 3 lines of Python without requiring Redis, ZooKeeper, or complex infrastructure.
 
+https://github.com/maybm-26/Turnstile/raw/main/Screen%20Recording%202026-11-19%20184806.mp4
 ---
 
 ## Why Turnstile?
