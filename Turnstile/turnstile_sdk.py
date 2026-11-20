@@ -1,4 +1,4 @@
-json
+import json
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -39,7 +39,7 @@ class TurnstileClient:
             except json.JSONDecodeError:
                 msg = err_body
             if exc.code == 409:
-                if "busy" in msg.lower():
+                if "busy" in msg.lower() or "already leased" in msg.lower():
                     raise ResourceBusyError(msg) from None
                 raise InvalidLeaseError(msg) from None
             raise TurnstileError(f"HTTP {exc.code}: {msg}") from None
