@@ -1,9 +1,12 @@
 import argparse
 import json
 import math
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from engine import Engine, Busy, InvalidLease
+
+BLOCKED_EVENTS = []
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -20,8 +23,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   table { width: 100%; border-collapse: collapse; background: #111827; border-radius: 10px; overflow: hidden; }
   th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #1f2937; font-size: 14px; }
   th { color: #94a3b8; font-size: 12px; text-transform: uppercase; }
-  .tag-ok { color: #34d399; font-weight: 600; }
-  .tag-err { color: #f87171; font-weight: 600; }
+  .tag-ok { color: #34d399; font-weight: 600; text-transform: uppercase; }
+  .tag-err { color: #f87171; font-weight: 700; text-transform: uppercase; }
 </style>
 </head>
 <body>
@@ -45,10 +48,10 @@ async function refresh() {
   const rows = events.slice().reverse().map(e => {
     const tok = e.token || 0;
     if (tok > maxTok) maxTok = tok;
-    const type = (e.event || e.type || 'event').toString();
-    const isErr = /reject|busy|deny|fail|expire|stale/i.test(type + JSON.stringify(e));
+    const type = (e.kind || e.event || 'event').toString();
+    const isErr = type.toLowerCase().includes('blocked');
     if (isErr) blocked++;
-    return `<tr><td class="${isErr ? 'tag-err' : 'tag-ok'}">${type}</td><td>${e.resource || '-'}</td><td>${e.owner || '-'}</td><td>#${tok}</td><td><code>${JSON.stringify(e)}</code></td></tr>`;
+    return `<tr><td class="${isErr ? 'tag-err' : 'tag-ok'}">${type}</td><td>${e.resource || '-'}</td><td>${e.owner || '-'}</td><td>${tok ? '#' + tok : '-'}</td><td><code>${JSON.stringify(e)}</code></td></tr>`;
   }).join('');
   document.getElementById('token').textContent = '#' + maxTok;
   document.getElementById('blocked').textContent = blocked;
@@ -80,11 +83,14 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/health':
             self.reply(200, {'ok': True, 'mode': 'local-demo-only'})
         elif path == '/events':
-            self.reply(200, self.server.engine.events())
+            combined = list(self.server.engine.events()) + BLOCKED_EVENTS
+            combined.sort(key=lambda x: x.get('at', 0))
+            self.reply(200, combined)
         else:
             self.reply(404, {'error': 'Not found'})
 
     def do_POST(self):
+        resource, owner, token = '-', '-', None
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= 16384:
@@ -93,6 +99,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError('Expected a JSON object')
             resource, owner = data.get('resource'), data.get('owner')
+            token = data.get('token')
             if not all(isinstance(v, str) and 0 < len(v) <= 200 for v in (resource, owner)):
                 raise ValueError('resource and owner must be nonempty strings, max 200 characters')
             path = urlparse(self.path).path
@@ -102,7 +109,6 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('ttl must be between 0.1 and 300 seconds')
                 result = self.server.engine.acquire(resource, owner, ttl)
             elif path in ('/release', '/demo-write'):
-                token = data.get('token')
                 if type(token) is not int or token <= 0:
                     raise ValueError('token must be a positive integer')
                 if path == '/release':
@@ -117,6 +123,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.reply(200, result)
         except (Busy, InvalidLease) as exc:
+            BLOCKED_EVENTS.append({
+                'at': time.time(),
+                'kind': 'BLOCKED',
+                'resource': resource,
+                'owner': owner,
+                'token': token if isinstance(token, int) else None,
+                'reason': str(exc),
+            })
             self.reply(409, {'error': str(exc)})
         except (ValueError, TypeError) as exc:
             self.reply(400, {'error': str(exc)})
