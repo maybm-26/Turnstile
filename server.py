@@ -5,6 +5,60 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from engine import Engine, Busy, InvalidLease
 
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><title>Turnstile — Live AI Agent Control Plane</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 24px; }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 16px; }
+  .badge { background: #064e3b; color: #34d399; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 20px 0; }
+  .card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 16px; }
+  .num { font-size: 28px; font-weight: 700; color: #38bdf8; margin-top: 6px; }
+  .blocked { color: #f87171; }
+  table { width: 100%; border-collapse: collapse; background: #111827; border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #1f2937; font-size: 14px; }
+  th { color: #94a3b8; font-size: 12px; text-transform: uppercase; }
+  .tag-ok { color: #34d399; font-weight: 600; }
+  .tag-err { color: #f87171; font-weight: 600; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div><h1 style="margin:0;font-size:22px;">Turnstile Control Plane</h1><small style="color:#94a3b8;">Real-Time Execution Locks & Fencing Tokens for AI Agents</small></div>
+    <span class="badge">● LIVE (Auto-refreshing)</span>
+  </div>
+  <div class="grid">
+    <div class="card"><div>Total Recorded Events</div><div class="num" id="total">0</div></div>
+    <div class="card"><div>Latest Fencing Token</div><div class="num" id="token">#0</div></div>
+    <div class="card"><div>Collisions / Stale Writes Blocked</div><div class="num blocked" id="blocked">0</div></div>
+  </div>
+  <table><thead><tr><th>Event</th><th>Resource</th><th>Agent / Owner</th><th>Token</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table>
+<script>
+async function refresh() {
+  const res = await fetch('/events');
+  const data = await res.json();
+  const events = Array.isArray(data) ? data : (data.events || []);
+  document.getElementById('total').textContent = events.length;
+  let maxTok = 0, blocked = 0;
+  const rows = events.slice().reverse().map(e => {
+    const tok = e.token || 0;
+    if (tok > maxTok) maxTok = tok;
+    const type = (e.event || e.type || 'event').toString();
+    const isErr = /reject|busy|deny|fail|expire|stale/i.test(type + JSON.stringify(e));
+    if (isErr) blocked++;
+    return `<tr><td class="${isErr ? 'tag-err' : 'tag-ok'}">${type}</td><td>${e.resource || '-'}</td><td>${e.owner || '-'}</td><td>#${tok}</td><td><code>${JSON.stringify(e)}</code></td></tr>`;
+  }).join('');
+  document.getElementById('token').textContent = '#' + maxTok;
+  document.getElementById('blocked').textContent = blocked;
+  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5">No events yet. Run python ai_agent_demo.py!</td></tr>';
+}
+refresh(); setInterval(refresh, 1000);
+</script>
+</body></html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     def reply(self, status, data):
         body = json.dumps(data).encode()
@@ -16,7 +70,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == '/health':
+        if path == '/':
+            body = DASHBOARD_HTML.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif path == '/health':
             self.reply(200, {'ok': True, 'mode': 'local-demo-only'})
         elif path == '/events':
             self.reply(200, self.server.engine.events())
@@ -62,6 +123,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             self.log_error('Unexpected server error', exc_info=False) if False else None
             self.reply(500, {'error': 'Internal error; demo unavailable'})
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Local prototype. Do not expose to the internet.')
