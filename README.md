@@ -3,6 +3,7 @@
 **Zero-dependency execution locks and fencing tokens for autonomous AI agents.**
 
 When multiple AI agents or background workers act on the same customer, API, or database record at the same time, they collide—causing duplicate refunds, double emails, and corrupted state. Turnstile stops collisions in 3 lines of Python without requiring Redis, ZooKeeper, or complex infrastructure.
+<img width="953" height="442" alt="image" src="https://github.com/user-attachments/assets/2bb9eabb-acf3-4773-84a2-5925f06a010f" />
 
 https://github.com/maybm-26/Turnstile/raw/main/Screen%20Recording%202026-11-19%20184806.mp4
 ---
