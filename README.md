@@ -45,7 +45,28 @@ except ResourceBusyError:
 ```
 
 ---
+## Use With CrewAI (Prevent Parallel Agent Tool Collisions)
 
+Wrap any CrewAI `@tool` with Turnstile so parallel agents never double-execute critical actions:
+
+```python
+from crewai.tools import tool
+from turnstile_sdk import TurnstileClient, ResourceBusyError
+
+turnstile = TurnstileClient("http://127.0.0.1:8765")
+
+@tool("Issue Customer Refund")
+def issue_refund(customer_id: str, amount: float) -> str:
+    """Safely issues a one-time refund using a Turnstile execution lock."""
+    try:
+        with turnstile.lock(f"stripe:refund:{customer_id}", owner="crewai-worker", ttl=15) as token:
+            turnstile.write_fenced(f"stripe:refund:{customer_id}", "crewai-worker", token, f"refunded_\${amount}")
+            return f"Success: Refunded \${amount} to {customer_id} (token #{token})."
+    except ResourceBusyError:
+        return f"Blocked: Another agent is already processing a refund for {customer_id}."
+```
+
+---
 ## Project Structure
 * `engine.py` — SQLite-backed lease and monotonic fencing token engine.
 * `server.py` — Lightweight HTTP JSON API (`/acquire`, `/release`, `/demo-write`, `/events`, `/health`).
