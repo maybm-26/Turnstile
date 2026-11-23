@@ -14,8 +14,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8"><title>Turnstile — Live AI Agent Control Plane</title>
 <style>
   body { font-family: system-ui, sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 24px; }
-  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 16px; }
-  .badge { background: #064e3b; color: #34d399; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
+  .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 16px; gap: 12px; flex-wrap: wrap; }
+  .actions { display: flex; align-items: center; gap: 12px; }
+  .btn { background: #2563eb; color: #fff; border: none; padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn:hover { background: #1d4ed8; }
+  .btn:disabled { opacity: 0.6; cursor: wait; }
+  .badge { background: #064e3b; color: #34d399; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 20px 0; }
   .card { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 16px; }
   .num { font-size: 28px; font-weight: 700; color: #38bdf8; margin-top: 6px; }
@@ -30,7 +34,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <body>
   <div class="header">
     <div><h1 style="margin:0;font-size:22px;">Turnstile Control Plane</h1><small style="color:#94a3b8;">Real-Time Execution Locks & Fencing Tokens for AI Agents</small></div>
-    <span class="badge">● LIVE (Auto-refreshing)</span>
+    <div class="actions">
+      <button class="btn" id="simBtn" onclick="simulate()">⚡ Simulate Agent Collision</button>
+      <span class="badge">● LIVE (Auto-refreshing)</span>
+    </div>
   </div>
   <div class="grid">
     <div class="card"><div>Total Recorded Events</div><div class="num" id="total">0</div></div>
@@ -39,6 +46,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
   <table><thead><tr><th>Event</th><th>Resource</th><th>Agent / Owner</th><th>Token</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table>
 <script>
+async function simulate() {
+  const btn = document.getElementById('simBtn');
+  btn.disabled = true; btn.textContent = 'Simulating...';
+  const resId = 'stripe:refund:cust_' + Math.floor(1000 + Math.random() * 9000);
+  try {
+    const r1 = await fetch('/acquire', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', ttl: 10 }) });
+    const lease = await r1.json();
+    await fetch('/acquire', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-beta-duplicate', ttl: 10 }) });
+    await fetch('/demo-write', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token, value: 'refunded_$500_once' }) });
+    await fetch('/release', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token }) });
+    await refresh();
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ Simulate Agent Collision';
+  }
+}
 async function refresh() {
   const res = await fetch('/events');
   const data = await res.json();
@@ -55,7 +77,7 @@ async function refresh() {
   }).join('');
   document.getElementById('token').textContent = '#' + maxTok;
   document.getElementById('blocked').textContent = blocked;
-  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5">No events yet. Run python ai_agent_demo.py!</td></tr>';
+  document.getElementById('rows').innerHTML = rows || '<tr><td colspan="5">No events yet. Click "Simulate Agent Collision" above!</td></tr>';
 }
 refresh(); setInterval(refresh, 1000);
 </script>
@@ -81,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == '/health':
-            self.reply(200, {'ok': True, 'mode': 'local-demo-only'})
+            self.reply(200, {'ok': True, 'mode': 'cloud-demo'})
         elif path == '/events':
             combined = list(self.server.engine.events()) + BLOCKED_EVENTS
             combined.sort(key=lambda x: x.get('at', 0))
@@ -135,7 +157,6 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError) as exc:
             self.reply(400, {'error': str(exc)})
         except Exception:
-            self.log_error('Unexpected server error', exc_info=False) if False else None
             self.reply(500, {'error': 'Internal error; demo unavailable'})
 
 
