@@ -140,13 +140,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Local prototype. Do not expose to the internet.')
-    parser.add_argument('--port', type=int, default=8765)
+    import os
+    default_port = int(os.environ.get('PORT', 8765))
+    parser = argparse.ArgumentParser(description='Turnstile Coordination Server')
+    parser.add_argument('--port', type=int, default=default_port)
+    parser.add_argument('--host', default='0.0.0.0')
     parser.add_argument('--db', default='turnstile.db')
     args = parser.parse_args()
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.engine = Engine(args.db)
-    print(f'Local demo: http://127.0.0.1:{args.port}', flush=True)
+    print(f'Turnstile server running on http://{args.host}:{args.port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
