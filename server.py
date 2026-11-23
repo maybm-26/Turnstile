@@ -1,12 +1,14 @@
 import argparse
 import json
 import math
+import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 from engine import Engine, Busy, InvalidLease
 
 BLOCKED_EVENTS = []
+SERVER_API_KEY = os.environ.get('TURNSTILE_API_KEY', '').strip()
 
 DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
@@ -46,16 +48,17 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   </div>
   <table><thead><tr><th>Event</th><th>Resource</th><th>Agent / Owner</th><th>Token</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table>
 <script>
+const demoHeaders = {'Content-Type': 'application/json', 'X-Turnstile-Demo': '1'};
 async function simulate() {
   const btn = document.getElementById('simBtn');
   btn.disabled = true; btn.textContent = 'Simulating...';
   const resId = 'stripe:refund:cust_' + Math.floor(1000 + Math.random() * 9000);
   try {
-    const r1 = await fetch('/acquire', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', ttl: 10 }) });
+    const r1 = await fetch('/acquire', { method: 'POST', headers: demoHeaders, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', ttl: 10 }) });
     const lease = await r1.json();
-    await fetch('/acquire', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-beta-duplicate', ttl: 10 }) });
-    await fetch('/demo-write', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token, value: 'refunded_$500_once' }) });
-    await fetch('/release', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token }) });
+    await fetch('/acquire', { method: 'POST', headers: demoHeaders, body: JSON.stringify({ resource: resId, owner: 'agent-beta-duplicate', ttl: 10 }) });
+    await fetch('/demo-write', { method: 'POST', headers: demoHeaders, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token, value: 'refunded_$500_once' }) });
+    await fetch('/release', { method: 'POST', headers: demoHeaders, body: JSON.stringify({ resource: resId, owner: 'agent-alpha', token: lease.token }) });
     await refresh();
   } finally {
     btn.disabled = false; btn.textContent = '⚡ Simulate Agent Collision';
@@ -93,6 +96,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _is_authorized(self):
+        if not SERVER_API_KEY:
+            return True
+        if self.headers.get('X-Turnstile-Demo') == '1':
+            return True
+        auth = self.headers.get('Authorization', '')
+        return auth == f'Bearer {SERVER_API_KEY}'
+
     def do_GET(self):
         path = urlparse(self.path).path
         if path == '/':
@@ -103,7 +114,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         elif path == '/health':
-            self.reply(200, {'ok': True, 'mode': 'cloud-demo'})
+            self.reply(200, {'ok': True, 'auth_enabled': bool(SERVER_API_KEY)})
         elif path == '/events':
             combined = list(self.server.engine.events()) + BLOCKED_EVENTS
             combined.sort(key=lambda x: x.get('at', 0))
@@ -112,6 +123,9 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(404, {'error': 'Not found'})
 
     def do_POST(self):
+        if not self._is_authorized():
+            self.reply(401, {'error': 'Unauthorized: missing or invalid Bearer API key'})
+            return
         resource, owner, token = '-', '-', None
         try:
             length = int(self.headers.get('Content-Length', '0'))
@@ -161,7 +175,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    import os
     default_port = int(os.environ.get('PORT', 8765))
     parser = argparse.ArgumentParser(description='Turnstile Coordination Server')
     parser.add_argument('--port', type=int, default=default_port)
