@@ -17,16 +17,21 @@ class InvalidLeaseError(TurnstileError):
 
 
 class TurnstileClient:
-    def __init__(self, base_url="http://127.0.0.1:8765", timeout=5.0):
+    def __init__(self, base_url="http://127.0.0.1:8765", api_key=None, timeout=5.0):
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
         self.timeout = timeout
 
     def _post(self, path, payload):
         body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         req = urllib.request.Request(
             f"{self.base_url}{path}",
             data=body,
-            headers={"Content-Type": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
